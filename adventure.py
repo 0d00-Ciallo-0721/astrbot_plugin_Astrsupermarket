@@ -308,13 +308,25 @@ class AdventureManager:
         
         # 处理成就
         if "achievement" in event_data["effects"]:
-            achievement_id = event_data["effects"]["achievement"]
-            if "adventure_achievements" not in user_data:
-                user_data["adventure_achievements"] = []
-                
-            if achievement_id not in user_data["adventure_achievements"]:
-                user_data["adventure_achievements"].append(achievement_id)
-                results["new_achievement"] = f"解锁成就：{achievement_id}！"
+            achievement_name = event_data["effects"]["achievement"]
+
+            # --- 核心修改点 ---
+            # 初始化待解锁成就列表
+            if "achievements_to_unlock" not in results:
+                results["achievements_to_unlock"] = []
+
+            # 将成就ID添加到待解锁列表中
+            # 我们需要从 achievements.py 找到名字对应的ID
+            from .achievements import ACHIEVEMENTS
+            ach_id_to_unlock = None
+            for ach_id, ach_data in ACHIEVEMENTS.items():
+                if ach_data['name'] == achievement_name:
+                    ach_id_to_unlock = ach_id
+                    break
+
+            if ach_id_to_unlock and ach_id_to_unlock not in user_data.get("achievements", []):
+                results["achievements_to_unlock"].append(ach_id_to_unlock)
+                results["new_achievement"] = f"解锁成就：{achievement_name}！" 
         
         # 处理称号
         if "title" in event_data["effects"]:
@@ -523,26 +535,5 @@ class AdventureManager:
         
         # 保存背包变化
         shop_manager._save_shop_data()
-        
-        # 检查成就
-        if actual_times >= 1:
-            if "adventure_achievements" not in user_data:
-                user_data["adventure_achievements"] = []
-            
-            # 初级探险家：完成第一次大冒险
-            if "beginner_adventurer" not in user_data["adventure_achievements"]:
-                user_data["adventure_achievements"].append("beginner_adventurer")
-                results["new_achievement"] = "初级探险家：完成第一次大冒险！"
-            
-            # 日行千里：累计进行100次冒险判定
-            if user_data["adventure_count"] >= 100 and "travel_master" not in user_data["adventure_achievements"]:
-                user_data["adventure_achievements"].append("travel_master")
-                results["new_achievement"] = "日行千里：累计进行100次冒险判定！"
-            
-            # 都市传说：遇到极低概率事件
-            for event_result in results["events"]:
-                if event_result["id"] == "creator_recognition" and "adventure_king" not in user_data["adventure_achievements"]:
-                    user_data["adventure_achievements"].append("adventure_king")
-                    results["new_achievement"] = "冒险王：获得创世神的认可！"
         
         return results
