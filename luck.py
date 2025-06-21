@@ -163,12 +163,27 @@ async def process_lottery(event, group_id: str, user_id: str, user_name: str, us
         user_data["points"] += reward
         description = LEVEL_DESCRIPTIONS[level]
         
-        # 准备图片路径
-        image_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "luck", f"{lucky_number}.jpg")
-        
-        if not os.path.exists(image_path):
-            logger.warning(f"抽奖图片不存在: {image_path}, 将只发送文本消息。")
-            image_path = None
+        # --- [修改] 根据幸运数字范围匹配图片 ---
+        image_filename = ""
+        if 1 <= lucky_number <= 10:
+            image_filename = "a.jpg"
+        elif 11 <= lucky_number <= 44:
+            image_filename = "b.jpg"
+        elif 45 <= lucky_number <= 80:
+            image_filename = "c.jpg"
+        elif 81 <= lucky_number <= 110:
+            image_filename = "d.jpg"
+        elif lucky_number == 111:
+            image_filename = "e.jpg"
+
+        image_path = None
+        if image_filename:
+            # 准备图片路径
+            image_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "luck", image_filename)
+            if not os.path.exists(image_path):
+                logger.warning(f"抽奖图片不存在: {image_path}, 将只发送文本消息。")
+                image_path = None
+        # --- [修改结束] ---
 
         # 准备消息
         effect_prefix = ""
