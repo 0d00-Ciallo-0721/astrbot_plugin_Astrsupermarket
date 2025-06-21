@@ -1513,6 +1513,10 @@ class SignPlugin(Star):
             yield event.plain_result(results["message"])
             return
         
+        if "achievements_to_unlock" in results:
+            for ach_id in results["achievements_to_unlock"]:
+                await self.unlock_specific_achievement(event, user_id, ach_id)        
+        
         # 保存用户数据
         self._save_user_data()
         
@@ -1603,6 +1607,9 @@ class SignPlugin(Star):
             yield event.plain_result(results["message"])
             return
         
+        if "achievements_to_unlock" in results:
+            for ach_id in results["achievements_to_unlock"]:
+                await self.unlock_specific_achievement(event, user_id, ach_id)        
         # 保存用户数据
         self._save_user_data()
         
