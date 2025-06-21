@@ -287,7 +287,7 @@ class MarketManager:
             
         return True, f"✅ 购买成功！你已花费 {cost} Astr币购买了 {target_name}。", False
 
-    async def init_work_command(self, event: AstrMessageEvent, group_id: str, owner_id: str, worker_id: str) -> Tuple[bool, str]:
+    async def init_work_command(self, event: AstrMessageEvent, group_id: str, owner_id: str, worker_id: str) -> Tuple[bool, str, Optional[str]]:
         """初始化打工命令，返回工作列表
         
         Returns:
@@ -295,7 +295,7 @@ class MarketManager:
         """
         # 检查是否尝试让机器人打工
         if worker_id == event.get_self_id():
-            return False, "妹妹是天，不能对妹妹操作"
+            return False, "妹妹是天，不能对妹妹操作", None
         
             # 检查是否拥有该用户
         owner_market_data = self._get_user_market_data(group_id, owner_id)
