@@ -51,23 +51,30 @@ class ShopManager:
         return self.shop_data.setdefault(str(group_id), {})
     
     def _get_user_shop_data(self, group_id: str, user_id: str) -> dict:
-        """获取指定群聊中用户的商店数据，如果不存在则创建"""
-        group_shop_data = self._get_group_shop_data(group_id)
-        
-        if user_id not in group_shop_data:
-            group_shop_data[user_id] = {
-                "inventory": {},  # 用户背包，格式: {category: {item_id: quantity}}
-                "purchase_history": [],  # 购买历史
-                "use_history": []  # 使用历史
-            }
-        
-        # 确保每个分类都存在
-        user_inventory = group_shop_data[user_id]["inventory"]
-        for category in SHOP_DATA.keys():
-            if category not in user_inventory:
-                user_inventory[category] = {}
+            """
+            获取指定群聊中用户的商店数据，如果不存在则创建，并兼容旧数据
+            """
+            group_shop_data = self._get_group_shop_data(group_id)
+            
+            # 确保用户数据字典存在，如果不存在则创建
+            if user_id not in group_shop_data:
+                group_shop_data[user_id] = {}
+
+            # 获取用户数据引用
+            user_shop_data = group_shop_data[user_id]
+
+            # --- [BUG修复] ---
+            # 使用 setdefault 来确保关键字段存在，这能同时处理新用户和旧数据迁移
+            user_shop_data.setdefault("inventory", {})
+            user_shop_data.setdefault("purchase_history", [])
+            user_shop_data.setdefault("use_history", [])
+            
+            # 确保背包中的每个分类都存在
+            user_inventory = user_shop_data["inventory"]
+            for category in SHOP_DATA.keys():
+                user_inventory.setdefault(category, {})
                 
-        return group_shop_data[user_id]
+            return user_shop_data
     
     def get_user_bag(self, group_id: str, user_id: str) -> Dict[str, Dict[str, int]]:
         """获取用户背包内容"""
