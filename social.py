@@ -3,7 +3,7 @@
 import os
 import yaml
 import random
-from datetime import datetime
+from datetime import datetime, timedelta 
 from typing import Dict, List, Tuple, Any, Optional
 
 from astrbot.api import logger
@@ -19,7 +19,7 @@ class SocialManager:
         self.data_dir = data_dir
         self.social_data_file = os.path.join(data_dir, "social_data.yaml")
         self.social_data = self._load_data()
-        self.date_sessions = {}  # 临时存储约会会话
+        self.active_invitations: Dict[str, Dict[str, Dict]] = {}
         
     def _load_data(self) -> dict:
         """加载社交数据"""
@@ -32,6 +32,15 @@ class SocialManager:
                 return {}
         return {}
     
+    def cleanup_expired_invitations(self):
+        """清理所有过期的约会邀请"""
+        now = datetime.now()
+        for group_id in list(self.active_invitations.keys()):
+            for target_id in list(self.active_invitations[group_id].keys()):
+                invitation = self.active_invitations[group_id][target_id]
+                if now - invitation['created_at'] > timedelta(seconds=60):
+                    self.remove_invitation(group_id, target_id) 
+
     def _save_data(self):
         """保存社交数据"""
         try:
@@ -164,25 +173,51 @@ class SocialManager:
         
         return True, f"赠送成功！对方好感度 +{favorability_gain} ({old_value} → {new_value})，当前关系：【{new_level}】"
 
+    def create_invitation(self, group_id: str, initiator_id: str, target_id: str) -> Tuple[bool, str]:
+        """创建一个约会邀请，取代 start_date_session"""
+        group_id_str = str(group_id)
+        if group_id_str not in self.active_invitations:
+            self.active_invitations[group_id_str] = {}
 
-    
-    def start_date_session(self, session_id: str, group_id: str, initiator_id: str, target_id: str):
-        """创建一个约会会话"""
-        self.date_sessions[session_id] = {
-            "group_id": group_id,
-            "initiator_id": initiator_id,
-            "target_id": target_id,
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 检查发起者或目标是否已在进行中的邀请中
+        for inv_target_id, inv_data in self.active_invitations[group_id_str].items():
+            if inv_data['initiator_id'] == initiator_id:
+                return False, "你已经发出了一个约会邀请，请等待其结束。"
+            if inv_target_id == target_id:
+                return False, "对方正在被其他人邀请，请稍后再试。"
+
+        # 注册一个新的邀请
+        self.active_invitations[group_id_str][str(target_id)] = {
+            "initiator_id": str(initiator_id),
+            "created_at": datetime.now()
         }
-    
-    def get_date_session(self, session_id: str) -> Optional[dict]:
-        """获取约会会话"""
-        return self.date_sessions.get(session_id)
-    
-    def end_date_session(self, session_id: str):
-        """结束约会会话"""
-        if session_id in self.date_sessions:
-            del self.date_sessions[session_id]
+        return True, "邀请已创建"
+
+    def get_invitation(self, group_id: str, target_id: str) -> Optional[dict]:
+        """获取一个待处理的约会邀请"""
+        group_id_str = str(group_id)
+        target_id_str = str(target_id)
+        
+        invitation = self.active_invitations.get(group_id_str, {}).get(target_id_str)
+        
+        if not invitation:
+            return None
+            
+        # 检查邀请是否超时（60秒）
+        if datetime.now() - invitation['created_at'] > timedelta(seconds=60):
+            # 如果超时，清理掉
+            self.remove_invitation(group_id, target_id)
+            return None
+            
+        return invitation
+
+    def remove_invitation(self, group_id: str, target_id: str):
+        """结束/移除一个约会邀请"""
+        group_id_str = str(group_id)
+        target_id_str = str(target_id)
+        
+        if group_id_str in self.active_invitations and target_id_str in self.active_invitations[group_id_str]:
+            del self.active_invitations[group_id_str][target_id_str]
     
     def check_social_master_achievement(self, group_id: str, user_id: str) -> bool:
         """检查是否满足'社交达人'成就条件：与5名不同用户的好感度在50以上"""
