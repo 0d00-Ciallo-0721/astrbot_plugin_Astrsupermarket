@@ -32,7 +32,7 @@ CLEANUP_INTERVAL_HOURS = 1
 # 图片文件的最大保留时间（单位：天），例如只保留最近1天的图片
 MAX_FILE_AGE_DAYS = 1
 
-@register("astrbot_plugin_Astrsupermarket", "和泉智宏", "Astr超级市场", "1.0", "https://github.com/0d00-Ciallo-0721/astrbot_plugin_Astrsupermarket")
+@register("astrbot_plugin_Astrsupermarket", "和泉智宏", "Astr超级市场", "1.1", "https://github.com/0d00-Ciallo-0721/astrbot_plugin_Astrsupermarket")
 class SignPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
