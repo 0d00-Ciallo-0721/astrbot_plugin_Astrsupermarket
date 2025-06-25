@@ -47,6 +47,9 @@ class SignPlugin(Star):
         # 初始化用户数据
         self.user_data = self._load_user_data()
         
+        # 初始化一个字典来存储待处理的补签决策
+        self.pending_resign_decisions = {}
+        
         # 初始化商城管理器
         self.market = MarketManager(self.data_dir)
         
@@ -233,6 +236,65 @@ class SignPlugin(Star):
         # 调用qsin.py中的签到处理函数
         async for result in process_sign_in(self, event):
             yield result
+    
+    # 添加处理补签决策的事件处理器
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_resign_decision(self, event: AstrMessageEvent):
+        """处理用户对补签提示的回复（补签/跳过）"""
+        msg = event.message_str.strip()
+        if msg not in ["补签", "跳过"]:
+            return
+
+        group_id = event.get_group_id()
+        user_id = event.get_sender_id()
+        decision_key = (group_id, user_id)
+
+        # 检查该用户是否有待处理的决策
+        if not hasattr(self, 'pending_resign_decisions') or decision_key not in self.pending_resign_decisions:
+            return
+
+        # 检查决策是否超时
+        prompt_time = self.pending_resign_decisions[decision_key]["prompted_at"]
+        if datetime.now() - prompt_time > timedelta(seconds=60):
+            del self.pending_resign_decisions[decision_key]
+            # 超时后不主动发送消息，避免刷屏
+            return
+
+        # 确认是有效回复，停止事件传播
+        event.stop_event()
+
+        # 清理待处理的决策
+        del self.pending_resign_decisions[decision_key]
+
+        user_name = event.get_sender_name() or f"用户{user_id}"
+        avatar_url = f"http://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640" if event.get_platform_name() == "aiocqhttp" else ""
+        
+        continue_sign_in = False
+
+        if msg == "补签":
+            success, result = await perform_re_sign(self, event, group_id, user_id, user_name, avatar_url)
+            if success:
+                await self.unlock_specific_achievement(event, user_id, 'signin_4')
+                if isinstance(result, str) and (result.startswith("http") or os.path.exists(result)):
+                    await event.send(event.image_result(result))
+                else:
+                    await event.send(event.plain_result(str(result)))
+                await event.send(event.plain_result("补签完成，现在为您进行今日签到..."))
+                continue_sign_in = True
+            else:
+                await event.send(event.plain_result(str(result)))
+        
+        elif msg == "跳过":
+            await event.send(event.plain_result("已跳过补签，为您直接签到（连续签到将重置为1天）..."))
+            continue_sign_in = True
+        
+        # 如果需要继续今日签到
+        if continue_sign_in:
+            from .qsin import _perform_actual_sign_in
+            # 调用实际签到函数
+            async for sign_result in _perform_actual_sign_in(self, event, group_id, user_id, user_name, avatar_url):
+                # 使用 await event.send() 发送后续消息
+                await event.send(sign_result)
 
 
     @filter.command("补签", alias={"buqian", "makeup"})
@@ -1766,17 +1828,13 @@ class SignPlugin(Star):
         
         yield event.plain_result(result_text)
 
-
-    # 修复约会指令的图片发送问题
     @filter.command("约会")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def start_date(self, event: AstrMessageEvent):
         """邀请另一位用户进行约会，影响双方好感度"""
-        # 检查是否@了机器人
         if not self.is_bot_mentioned(event):
             return
             
-        # 1. 解析指令
         initiator_id = event.get_sender_id()
         initiator_name = event.get_sender_name() or f"用户{initiator_id}"
         group_id = event.get_group_id()
@@ -1785,133 +1843,144 @@ class SignPlugin(Star):
         if not target_id:
             yield event.plain_result(f"{initiator_name}，请@一位你要邀请约会的用户。")
             return
+
+        # 检查是否是自己或机器人
+        if initiator_id == target_id:
+            yield event.plain_result("不能和自己约会哦~")
+            return
+        if target_id == event.get_self_id():
+            yield event.plain_result("抱歉，我现在很忙，没有时间约会~")
+            return
         
-        # 2. 获取目标用户名称
+        # 获取目标用户名称
         target_name = await self.market.get_user_name(event, target_id) or f"用户{target_id}"
         
-        # 3. 发起约会邀请
-        success, msg = await self.social_manager.initiate_date(
-            event, group_id, initiator_id, target_id
-        )
+        # 检查每日约会次数
+        initiator_data = self._get_user_in_group(group_id, initiator_id)
+        today = datetime.now().strftime("%Y-%m-%d")
+        if initiator_data.get("last_date_date") != today:
+            initiator_data["daily_date_count"] = 0
+            initiator_data["last_date_date"] = today
+        if initiator_data.get("daily_date_count", 0) >= 3:
+            yield event.plain_result("你今天已经约会3次了，请明天再来~")
+            return
         
+        # 在创建新邀请前，先清理所有过期邀请
+        self.social_manager.cleanup_expired_invitations()
+        # 创建约会邀请
+        success, msg = self.social_manager.create_invitation(group_id, initiator_id, target_id)
         if not success:
             yield event.plain_result(msg)
             return
-        
-        # 4. 等待对方回应
-        yield event.plain_result(f"{initiator_name} 向 {target_name} 发出了约会邀请！\n{target_name}，请在60秒内回复‘同意’接受邀请。")
-        
-        # 设置会话控制器
-        try:
-            from astrbot.core.utils.session_waiter import session_waiter, SessionController
             
-            @session_waiter(timeout=60, record_history_chains=False)
-            async def date_invitation_waiter(controller: SessionController, response_event: AstrMessageEvent):
-                # 检查回复者是否为目标用户
-                if response_event.get_sender_id() != target_id:
-                    return
-                    
-                # 检查回复内容是否为"同意"
-                response_msg = response_event.message_str.strip()
-                if response_msg == "同意":
-                    # 获取头像URL
-                    initiator_avatar = f"http://q1.qlogo.cn/g?b=qq&nk={initiator_id}&s=640"
-                    target_avatar = f"http://q1.qlogo.cn/g?b=qq&nk={target_id}&s=640"
-                    
-                    # 执行约会流程
-                    date_results = await self.social_manager.run_date(
-                        group_id, initiator_id, target_id, initiator_name, target_name
-                    )
-                    
-                    # 生成约会报告卡片
-                    from ._generate_social import generate_date_report_card
-                    card_path = await generate_date_report_card(
-                        initiator_id, initiator_name, initiator_avatar,
-                        target_id, target_name, target_avatar,
-                        date_results
-                    )
-                    
-                    # 创建一个空的结果对象
-                    result = response_event.make_result()
+        # 增加发起者的约会计数并保存
+        initiator_data["daily_date_count"] = initiator_data.get("daily_date_count", 0) + 1
+        self._save_user_data()
 
-                    if card_path and os.path.exists(card_path):
-                        # 正确的发送图片方式：构建一个包含Image组件的chain
-                        import astrbot.api.message_components as Comp
-                        result.chain = [Comp.Image.fromFileSystem(card_path)]
-                    else:
-                        # 图片生成失败，回退到文本模式
-                        logger.warning("约会报告卡片生成失败或路径不存在，回退到文本模式。")
-                        a_fav_change = date_results["user_a"]["favorability_change"]
-                        b_fav_change = date_results["user_b"]["favorability_change"]
-                        
-                        events_text = "\n".join([f"· {event['description']}" for event in date_results.get("events", [])])
-                        
-                        report_text = (
-                            f"📝 约会报告 📝\n\n"
-                            f"约会时间: {date_results['date_time']}\n"
-                            f"你们一起经历了：\n{events_text}\n\n"
-                            f"最终好感度变化：\n"
-                            f"· {initiator_name} 对 {target_name}: {a_fav_change:+d}\n"
-                            f"· {target_name} 对 {initiator_name}: {b_fav_change:+d}"
-                        )
-                        
-                        # 正确的发送纯文本方式：构建一个包含Plain组件的chain
-                        import astrbot.api.message_components as Comp
-                        result.chain = [Comp.Plain(report_text)]
-                    
-                    # 使用 event.send() 发送构建好的消息结果
-                    await response_event.send(result)
+        # 发送邀请消息，然后指令结束
+        yield event.plain_result(
+            f"{initiator_name} 向 {target_name} 发出了约会邀请！\n"
+            f"{target_name}，请在60秒内回复'同意'或'拒绝'。"
+        )
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_date_response(self, event: AstrMessageEvent):
+        """监听并处理约会邀请的回复"""
+        msg = event.message_str.strip()
+        # 只处理明确的"同意"或"拒绝"回复
+        if msg not in ["同意", "拒绝"]:
+            return
 
+        group_id = event.get_group_id()
+        responder_id = event.get_sender_id()
+
+        # 检查该用户是否有待处理的邀请
+        invitation = self.social_manager.get_invitation(group_id, responder_id)
+        if not invitation:
+            return  # 没有邀请，忽略此消息
+
+        # 找到了邀请，说明这条消息是回复。停止事件继续传播
+        event.stop_event()
+
+        initiator_id = invitation['initiator_id']
+        
+        # 获取双方名称和头像
+        initiator_name = await self.market.get_user_name(event, initiator_id) or f"用户{initiator_id}"
+        responder_name = event.get_sender_name() or f"用户{responder_id}"
+        initiator_avatar = f"http://q1.qlogo.cn/g?b=qq&nk={initiator_id}&s=640"
+        responder_avatar = f"http://q1.qlogo.cn/g?b=qq&nk={responder_id}&s=640"
+
+        if msg == "同意":
+            # 执行约会流程
+            date_results = await self.social_manager.run_date(
+                group_id, initiator_id, responder_id, initiator_name, responder_name
+            )
+            
+            # 生成约会报告卡片
+            from ._generate_social import generate_date_report_card
+            card_path = await generate_date_report_card(
+                initiator_id, initiator_name, initiator_avatar,
+                responder_id, responder_name, responder_avatar,
+                date_results
+            )
+
+            # 创建一个空的结果对象
+            result = event.make_result()
+
+            if card_path and os.path.exists(card_path):
+                # 使用正确的方式发送图片
+                import astrbot.api.message_components as Comp
+                result.chain = [Comp.Image.fromFileSystem(card_path)]
+            else:
+                # 图片生成失败，回退到文本模式
+                logger.warning("约会报告卡片生成失败或路径不存在，回退到文本模式。")
+                a_fav_change = date_results["user_a"]["favorability_change"]
+                b_fav_change = date_results["user_b"]["favorability_change"]
+                
+                events_text = "\n".join([f"· {event['description']}" for event in date_results.get("events", [])])
+                
+                report_text = (
+                    f"📝 约会报告 📝\n\n"
+                    f"约会时间: {date_results['date_time']}\n"
+                    f"你们一起经历了：\n{events_text}\n\n"
+                    f"最终好感度变化：\n"
+                    f"· {initiator_name} 对 {responder_name}: {a_fav_change:+d}\n"
+                    f"· {responder_name} 对 {initiator_name}: {b_fav_change:+d}"
+                )
+                
+                # 正确的发送纯文本方式
+                result.chain = [Comp.Plain(report_text)]
+            
+            # 发送结果
+            await event.send(result)
+
+            # 检查约会新手成就
+            for user_id in [initiator_id, responder_id]:
+                # 获取用户数据
+                user_data = self._get_user_in_group(group_id, user_id)
+                # 检查是否完成过约会
+                user_dates = user_data.get("date_count", 0)
+                if user_dates == 0:  # 首次约会
+                    # 更新约会次数
+                    user_data["date_count"] = 1
+                    # 解锁成就
+                    await self.unlock_specific_achievement(event, user_id, 'social_date_beginner')
                 else:
-                    # 拒绝约会
-                    reject_result = response_event.make_result()
-                    import astrbot.api.message_components as Comp
-                    reject_result.chain = [Comp.Plain(f"{target_name} 拒绝了 {initiator_name} 的约会邀请。")]
-                    await response_event.send(reject_result)
-                    
-                # 无论同意或拒绝，都结束会话
-                self.social_manager.end_date_session(event.unified_msg_origin)
-
-                    
-                # 检查约会新手成就
-                for user_id in [initiator_id, target_id]:
-                    # 获取用户数据
-                    user_data = self._get_user_in_group(group_id, user_id)
-                    # 检查是否完成过约会
-                    user_dates = user_data.get("date_count", 0)
-                    if user_dates == 0:  # 首次约会
-                        # 更新约会次数
-                        user_data["date_count"] = 1
-                        # 解锁成就
-                        await self.unlock_specific_achievement(response_event, user_id, 'social_date_beginner')
-                    else:
-                        # 增加约会次数
-                        user_data["date_count"] = user_dates + 1
-                    
-                    # 保存用户数据
-                    self._save_user_data()
-                        
-                    # 检查社交达人成就
-                    if self.social_manager.check_social_master_achievement(group_id, user_id):
-                        await self.unlock_specific_achievement(response_event, user_id, 'social_master')                
-                # 停止会话控制器
-                controller.stop()
+                    # 增加约会次数
+                    user_data["date_count"] = user_dates + 1
                 
-            try:
-                await date_invitation_waiter(event)
-            except TimeoutError:
-                # 超时处理
-                yield event.plain_result(f"{target_name} 没有回应约会邀请，邀请已过期。")
-                
-                # 结束约会会话
-                self.social_manager.end_date_session(event.unified_msg_origin)
-                
-        except Exception as e:
-            logger.error(f"约会邀请处理出错: {e}", exc_info=True)
-            yield event.plain_result("约会邀请处理出现错误，请稍后再试。")
+                # 检查社交达人成就
+                if self.social_manager.check_social_master_achievement(group_id, user_id):
+                    await self.unlock_specific_achievement(event, user_id, 'social_master')
+            
+            # 保存用户数据
+            self._save_user_data()
 
+        elif msg == "拒绝":
+            yield event.plain_result(f"{responder_name} 拒绝了 {initiator_name} 的约会邀请。")
 
-
+        # 无论同意或拒绝，都清理掉这个邀请
+        self.social_manager.remove_invitation(group_id, responder_id)
+        
     # 添加关系指令
     @filter.command("关系")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
