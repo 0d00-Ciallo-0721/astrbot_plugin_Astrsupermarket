@@ -3,56 +3,56 @@ SHOP_DATA = {
         "便当": { 
             "name": "便当", 
             "price": 30, 
-            "description": "使用后，你的下一次打工必定成功（特定高风险工作除外）。",
+            "description": "打工必定成功（特定高风险工作除外）。",
             "effect_buff": "work_guarantee_success",
             "category": "道具"
         },
         "守护符": { 
             "name": "守护符", 
             "price": 10, 
-            "description": "使用后，下一次打工即使失败也不会扣除Astr币。",
+            "description": "打工即使失败也不会扣除Astr币。",
             "effect_buff": "work_no_penalty",
             "category": "道具"
         },
         "能量饮料": {
             "name": "能量饮料", 
             "price": 30,
-            "description": "使用后，下一次打工成功时，获得的Astr币奖励随机提升1%-50%。",
+            "description": "打工成功时，获得的Astr币奖励随机提升1%-50%。",
             "effect_buff": "work_reward_boost",
             "category": "道具"
         },
         "幸运药水": {
             "name": "幸运药水", 
             "price": 15,
-            "description": "使用后，你的下一次抽奖必定为3星或以上的结果。",
+            "description": "抽奖必定为3星或以上的结果。",
             "effect_buff": "lottery_min_3star",
             "category": "道具"
         },
         "幸运四叶草": {
             "name": "幸运四叶草", 
             "price": 15,
-            "description": "使用后，下一次抽奖获得的Astr币奖励翻倍。",
+            "description": "抽奖获得的Astr币奖励翻倍。",
             "effect_buff": "lottery_double_reward",
             "category": "道具"
         },
         "择优券": {
             "name": "择优券", 
             "price": 30,
-            "description": "使用后，下一次抽奖将进行两次并取最高星级奖励。",
+            "description": "抽奖将进行两次并取最高星级奖励。",
             "effect_buff": "lottery_best_of_two",
             "category": "道具"
         },
         "探险家护符": {
             "name": "探险家护符",
             "price": 25,
-            "description": "使用后，下一次冒险若遭遇“危机与挑战”事件，将免受其负面影响。",
+            "description": "冒险“危机与挑战”，免受负面影响。",
             "effect_buff": "adventure_negate_crisis",
             "category": "道具"
         },
         "奇遇信标": {
             "name": "奇遇信标",
             "price": 35,
-            "description": "使用后，下一次冒险有更高概率遭遇“稀世奇遇”事件。",
+            "description": "冒险有更高概率触发“稀世奇遇”。",
             "effect_buff": "adventure_rare_boost",
             "category": "道具"
         }
